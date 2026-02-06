@@ -221,8 +221,8 @@
     /* ── Cards ── */
     .card {
       background: var(--bg-card);
-      backdrop-filter: blur(24px);
       -webkit-backdrop-filter: blur(24px);
+      backdrop-filter: blur(24px);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       overflow: hidden;
@@ -261,10 +261,12 @@
       justify-content: space-between;
       padding: 12px 16px;
       background: var(--bg-card);
+      -webkit-backdrop-filter: blur(24px);
       backdrop-filter: blur(24px);
       border: 1px solid var(--border);
       border-radius: var(--radius) var(--radius) 0 0;
       cursor: pointer;
+      -webkit-user-select: none;
       user-select: none;
       transition: background 0.15s, border-radius 0.2s;
     }
@@ -300,6 +302,7 @@
     .stats-section-body {
       padding: 16px;
       background: var(--bg-card);
+      -webkit-backdrop-filter: blur(24px);
       backdrop-filter: blur(24px);
       border: 1px solid var(--border);
       border-top: none;
