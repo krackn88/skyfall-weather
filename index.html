@@ -572,6 +572,19 @@
     }
     .map-btn.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(56,189,248,0.3); }
     .map-btn:hover { background: var(--bg-hover); }
+    .map-control-group {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+    .map-control-group input[type="range"] {
+      width: 90px;
+      accent-color: #38bdf8;
+      cursor: pointer;
+    }
 
     /* ── Leaflet Overrides ── */
     .leaflet-control-zoom { border: none !important; }
@@ -677,6 +690,7 @@
     const API = 'https://api.open-meteo.com/v1/forecast';
     const GEO_API = 'https://geocoding-api.open-meteo.com/v1/search';
     const RAINVIEWER_API = 'https://api.rainviewer.com/public/weather-maps.json';
+    const AIR_API = 'https://air-quality-api.open-meteo.com/v1/air-quality';
 
     const WEATHER_REFRESH_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -686,12 +700,14 @@
       timezone: 'auto',
       units: localStorage.getItem('wx_units') || 'metric', // metric or imperial
       weather: null,
+      airQuality: null,
       map: null,
       radarLayer: null,
       radarFrames: [],
       radarIdx: 0,
       radarPlaying: false,
       radarInterval: null,
+      radarOpacity: 0.6,
       weatherRefreshInterval: null
     };
 
@@ -811,7 +827,7 @@
     async function loadWeather(silent = false) {
       if (!silent) showLoader('Loading weather data...');
       try {
-        const params = new URLSearchParams({
+        const weatherParams = new URLSearchParams({
           latitude: state.lat,
           longitude: state.lon,
           current: [
@@ -838,9 +854,28 @@
           past_hours: 1
         });
 
-        const res = await fetch(`${API}?${params}`);
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        state.weather = await res.json();
+        const airParams = new URLSearchParams({
+          latitude: state.lat,
+          longitude: state.lon,
+          hourly: ['us_aqi', 'pm2_5', 'pm10'].join(','),
+          timezone: 'auto',
+          forecast_days: 2,
+          past_hours: 1
+        });
+
+        const [weatherRes, airRes] = await Promise.all([
+          fetch(`${API}?${weatherParams}`),
+          fetch(`${AIR_API}?${airParams}`)
+        ]);
+
+        if (!weatherRes.ok) throw new Error(`API error: ${weatherRes.status}`);
+        state.weather = await weatherRes.json();
+
+        if (airRes.ok) {
+          state.airQuality = await airRes.json();
+        } else {
+          state.airQuality = null;
+        }
         if (!silent) hideLoader();
         renderWeather();
         startWeatherRefreshInterval();
@@ -944,6 +979,17 @@
       const curUV = hourly.uv_index ? hourly.uv_index[nowIdx] : null;
       const curVis = hourly.visibility ? hourly.visibility[nowIdx] : null;
       const curDew = hourly.dew_point_2m ? hourly.dew_point_2m[nowIdx] : null;
+      const air = state.airQuality;
+      let curAQI = null;
+      let curPM25 = null;
+      let curPM10 = null;
+      if (air && air.hourly && air.hourly.time && air.hourly.time.length) {
+        let airIdx = air.hourly.time.findIndex(t => t === nowISO);
+        if (airIdx < 0) airIdx = findClosestIdx(air.hourly.time, nowISO);
+        curAQI = air.hourly.us_aqi ? air.hourly.us_aqi[airIdx] : null;
+        curPM25 = air.hourly.pm2_5 ? air.hourly.pm2_5[airIdx] : null;
+        curPM10 = air.hourly.pm10 ? air.hourly.pm10[airIdx] : null;
+      }
 
       // Today high/low
       const todayHi = daily.temperature_2m_max[0];
@@ -1033,6 +1079,8 @@
             getPressureDesc(cur.pressure_msl), 'var(--purple)')}
           ${buildStatCard('UV Index', 'fa-sun', fmt(curUV, 1), '',
             getUVDesc(curUV), 'var(--yellow)')}
+          ${curAQI != null ? buildStatCard('Air Quality', 'fa-smog', fmt(curAQI, 0), 'AQI',
+            `${getAQIDesc(curAQI)} · PM2.5 ${fmt(curPM25, 1)} µg/m³ · PM10 ${fmt(curPM10, 1)} µg/m³`, getAQIColor(curAQI)) : ''}
           ${buildStatCard('Visibility', 'fa-eye', fmt(convVis(curVis != null ? curVis / 1000 : null), 1), visUnit(),
             getVisDesc(curVis), 'var(--cyan)')}
           ${buildStatCard('Cloud Cover', 'fa-cloud', fmt(cur.cloud_cover), '%',
@@ -1055,7 +1103,12 @@
             <button class="map-btn" id="mapPlayBtn" onclick="toggleRadarPlay()">
               <i class="fas fa-play" id="radarPlayIcon"></i> Animate
             </button>
-            <span style="font-size:11px;color:var(--text-muted);margin-left:auto;display:flex;align-items:center;gap:4px;" id="radarTime"></span>
+            <button class="map-btn" onclick="recenterMap()"><i class="fas fa-location-crosshairs"></i> Recenter</button>
+            <div class="map-control-group">
+              <label for="radarOpacity">Opacity</label>
+              <input type="range" id="radarOpacity" min="20" max="100" value="60" oninput="setRadarOpacity(this.value)">
+            </div>
+            <span style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:4px;" id="radarTime">Loading radar…</span>
           </div>
           <div class="card-inner">
             <div id="weatherMap"></div>
@@ -1365,6 +1418,26 @@
       return 'Overcast';
     }
 
+    function getAQIDesc(aqi) {
+      if (aqi == null) return '--';
+      if (aqi <= 50) return 'Good';
+      if (aqi <= 100) return 'Moderate';
+      if (aqi <= 150) return 'Unhealthy for Sensitive';
+      if (aqi <= 200) return 'Unhealthy';
+      if (aqi <= 300) return 'Very Unhealthy';
+      return 'Hazardous';
+    }
+
+    function getAQIColor(aqi) {
+      if (aqi == null) return 'var(--text-muted)';
+      if (aqi <= 50) return 'var(--green)';
+      if (aqi <= 100) return 'var(--yellow)';
+      if (aqi <= 150) return 'var(--orange)';
+      if (aqi <= 200) return 'var(--red)';
+      if (aqi <= 300) return 'var(--purple)';
+      return 'var(--pink)';
+    }
+
     // ═══════════════════════════════════════════════
     // MAP + RADAR
     // ═══════════════════════════════════════════════
@@ -1387,7 +1460,7 @@
       L.circleMarker([state.lat, state.lon], {
         radius: 7, fillColor: '#38bdf8', fillOpacity: 1,
         color: '#fff', weight: 2
-      }).addTo(state.map);
+      }).addTo(state.map).bindTooltip(state.city || 'Current location', { direction: 'top' });
 
       // Load RainViewer radar
       loadRadar();
@@ -1404,9 +1477,14 @@
 
         if (state.radarFrames.length > 0) {
           addRadarFrame(state.radarIdx);
+        } else {
+          const el = document.getElementById('radarTime');
+          if (el) el.textContent = 'No radar frames available';
         }
       } catch(e) {
         console.warn('RainViewer load error:', e);
+        const el = document.getElementById('radarTime');
+        if (el) el.textContent = 'Radar unavailable';
       }
     }
 
@@ -1416,12 +1494,15 @@
       if (!frame) return;
       state.radarLayer = L.tileLayer(
         `https://tilecache.rainviewer.com${frame.path}/256/{z}/{x}/{y}/2/1_1.png`, {
-        opacity: 0.6, maxZoom: 18, zIndex: 10
+        opacity: state.radarOpacity, maxZoom: 18, zIndex: 10
       }).addTo(state.map);
 
       const time = new Date(frame.time * 1000);
       const el = document.getElementById('radarTime');
-      if (el) el.textContent = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (el) {
+        const mode = state.radarPlaying ? 'Animating' : 'Frame';
+        el.textContent = `${mode}: ${time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      }
     }
 
     function setMapRadar() {
@@ -1431,7 +1512,19 @@
       }
     }
 
+    function setRadarOpacity(value) {
+      state.radarOpacity = Number(value) / 100;
+      if (state.radarLayer) state.radarLayer.setOpacity(state.radarOpacity);
+    }
+
+    function recenterMap() {
+      if (state.map && state.lat != null && state.lon != null) {
+        state.map.flyTo([state.lat, state.lon], Math.max(state.map.getZoom(), 7), { duration: 0.6 });
+      }
+    }
+
     function toggleRadarPlay() {
+      if (!state.radarFrames.length) return;
       state.radarPlaying = !state.radarPlaying;
       const icon = document.getElementById('radarPlayIcon');
       const btn = document.getElementById('mapPlayBtn');
