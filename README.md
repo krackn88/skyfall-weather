@@ -12,6 +12,7 @@ A beautiful, full-featured weather app that runs entirely in the browser. No API
 - **48-hour hourly forecast** — Scrollable hour-by-hour predictions
 - **Predicted snow totals** — See how much snow is coming
 - **Sunrise & sunset** — With daylight duration
+- **Air quality insights** — Live US AQI with PM2.5/PM10 detail
 - **Live precipitation radar** — RainViewer map overlay
 - **Metric/Imperial toggle** — °C/°F, km/h/mph
 - **Collapsible stats** — Minimize details to make the map bigger
